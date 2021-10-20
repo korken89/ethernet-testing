@@ -1,0 +1,257 @@
+use smoltcp_nal::smoltcp;
+///! Stabilizer hardware configuration
+///!
+///! This file contains all of the hardware-specific configuration of Stabilizer.
+use stm32h7xx_hal::{
+    self as hal,
+    ethernet::{self, PHY},
+    gpio::{gpiob::PB0, gpioe::PE1, Output, PushPull, Speed::VeryHigh},
+    hal::digital::v2::OutputPin,
+    prelude::*,
+};
+use systick_monotonic::Systick;
+
+pub type LinkLed = PB0<Output<PushPull>>;
+pub type UserLed = PE1<Output<PushPull>>;
+
+const NUM_TCP_SOCKETS: usize = 4;
+const NUM_UDP_SOCKETS: usize = 4;
+const NUM_SOCKETS: usize = NUM_UDP_SOCKETS + NUM_TCP_SOCKETS;
+
+pub struct NetStorage {
+    pub ip_addrs: [smoltcp::wire::IpCidr; 1],
+
+    // Note: There is an additional socket set item required for the DHCP socket.
+    pub sockets: [Option<smoltcp::socket::SocketSetItem<'static>>; NUM_SOCKETS + 1],
+    pub tcp_socket_storage: [TcpSocketStorage; NUM_TCP_SOCKETS],
+    pub udp_socket_storage: [UdpSocketStorage; NUM_UDP_SOCKETS],
+    pub neighbor_cache: [Option<(smoltcp::wire::IpAddress, smoltcp::iface::Neighbor)>; 8],
+    pub routes_cache: [Option<(smoltcp::wire::IpCidr, smoltcp::iface::Route)>; 8],
+}
+
+impl NetStorage {
+    const IP_INIT: smoltcp::wire::IpCidr = smoltcp::wire::IpCidr::Ipv4(
+        smoltcp::wire::Ipv4Cidr::new(smoltcp::wire::Ipv4Address::UNSPECIFIED, 0),
+    );
+
+    const fn new() -> Self {
+        NetStorage {
+            // Placeholder for the real IP address, which is initialized at runtime.
+            ip_addrs: [Self::IP_INIT],
+            neighbor_cache: [None; 8],
+            routes_cache: [None; 8],
+            sockets: [None, None, None, None, None, None, None, None, None],
+            tcp_socket_storage: [TcpSocketStorage::new(); NUM_TCP_SOCKETS],
+            udp_socket_storage: [UdpSocketStorage::INIT; NUM_UDP_SOCKETS],
+        }
+    }
+}
+
+pub struct UdpSocketStorage {
+    rx_storage: [u8; 2048],
+    tx_storage: [u8; 2048],
+    tx_metadata: [smoltcp::storage::PacketMetadata<smoltcp::wire::IpEndpoint>; 10],
+    rx_metadata: [smoltcp::storage::PacketMetadata<smoltcp::wire::IpEndpoint>; 10],
+}
+
+impl UdpSocketStorage {
+    pub const INIT: Self = Self::new();
+
+    const fn new() -> Self {
+        Self {
+            rx_storage: [0; 2048],
+            tx_storage: [0; 2048],
+            tx_metadata: [smoltcp::storage::PacketMetadata::<smoltcp::wire::IpEndpoint>::EMPTY; 10],
+            rx_metadata: [smoltcp::storage::PacketMetadata::<smoltcp::wire::IpEndpoint>::EMPTY; 10],
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct TcpSocketStorage {
+    rx_storage: [u8; 2048],
+    tx_storage: [u8; 2048],
+}
+
+impl TcpSocketStorage {
+    const fn new() -> Self {
+        Self {
+            rx_storage: [0; 2048],
+            tx_storage: [0; 2048],
+        }
+    }
+}
+
+static mut STORE: NetStorage = NetStorage::new();
+
+/// The available networking devices on Stabilizer.
+pub struct NetworkDevices {
+    pub stack: NetworkStack,
+    pub phy: EthernetPhy,
+    pub mac_address: smoltcp::wire::EthernetAddress,
+}
+
+pub type NetworkStack =
+    smoltcp_nal::NetworkStack<'static, 'static, hal::ethernet::EthernetDMA<'static>>;
+
+pub type EthernetPhy = hal::ethernet::phy::LAN8742A<hal::ethernet::EthernetMAC>;
+
+// #[link_section = ".sram3.eth"]
+#[link_section = ".axisram.eth"]
+/// Static storage for the ethernet DMA descriptor ring.
+static mut DES_RING: ethernet::DesRing = ethernet::DesRing::new();
+
+#[inline(always)]
+pub fn setup(
+    mut core: rtic::export::Peripherals,
+    device: stm32h7xx_hal::stm32::Peripherals,
+) -> (NetworkDevices, Systick<1_000>, LinkLed, UserLed) {
+    let pwr = device.PWR.constrain();
+    let pwrcfg = pwr.ldo().freeze();
+
+    // Enable SRAM3 for the ethernet descriptor ring.
+    device.RCC.c1_ahb2enr.modify(|_, w| {
+        w.sram1en()
+            .set_bit()
+            .sram2en()
+            .set_bit()
+            .sram3en()
+            .set_bit()
+    });
+
+    // Clear reset flags.
+    device.RCC.rsr.write(|w| w.rmvf().set_bit());
+
+    let rcc = device.RCC.constrain();
+    let ccdr = rcc
+        .sys_ck(200.mhz())
+        .hclk(200.mhz())
+        .freeze(pwrcfg, &device.SYSCFG);
+
+    let gpioa = device.GPIOA.split(ccdr.peripheral.GPIOA);
+    let gpiob = device.GPIOB.split(ccdr.peripheral.GPIOB);
+    let gpioc = device.GPIOC.split(ccdr.peripheral.GPIOC);
+    let gpioe = device.GPIOE.split(ccdr.peripheral.GPIOE);
+    let gpiog = device.GPIOG.split(ccdr.peripheral.GPIOG);
+
+    // Configure ethernet pins.
+    {
+        let _rmii_ref_clk = gpioa.pa1.into_alternate_af11().set_speed(VeryHigh);
+        let _rmii_mdio = gpioa.pa2.into_alternate_af11().set_speed(VeryHigh);
+        let _rmii_mdc = gpioc.pc1.into_alternate_af11().set_speed(VeryHigh);
+        let _rmii_crs_dv = gpioa.pa7.into_alternate_af11().set_speed(VeryHigh);
+        let _rmii_rxd0 = gpioc.pc4.into_alternate_af11().set_speed(VeryHigh);
+        let _rmii_rxd1 = gpioc.pc5.into_alternate_af11().set_speed(VeryHigh);
+        let _rmii_tx_en = gpiog.pg11.into_alternate_af11().set_speed(VeryHigh);
+        let _rmii_txd0 = gpiog.pg13.into_alternate_af11().set_speed(VeryHigh);
+        let _rmii_txd1 = gpiob.pb13.into_alternate_af11().set_speed(VeryHigh);
+    }
+
+    let mac_addr = smoltcp::wire::EthernetAddress([0x02, 0x00, 0x11, 0x22, 0x33, 0x44]);
+    defmt::info!("EUI48: {}", mac_addr);
+
+    let network_devices = {
+        // Configure the ethernet controller
+        let (eth_dma, eth_mac) = unsafe {
+            ethernet::new_unchecked(
+                device.ETHERNET_MAC,
+                device.ETHERNET_MTL,
+                device.ETHERNET_DMA,
+                &mut DES_RING,
+                mac_addr,
+                ccdr.peripheral.ETH1MAC,
+                &ccdr.clocks,
+            )
+        };
+
+        // Reset and initialize the ethernet phy.
+        let mut lan8742a = ethernet::phy::LAN8742A::new(eth_mac.set_phy_addr(0));
+        lan8742a.phy_reset();
+        lan8742a.phy_init();
+
+        unsafe { ethernet::enable_interrupt() };
+
+        let store = unsafe { &mut STORE };
+
+        store.ip_addrs[0] = smoltcp::wire::IpCidr::new(
+            smoltcp::wire::IpAddress::Ipv4(smoltcp::wire::Ipv4Address::UNSPECIFIED),
+            0,
+        );
+
+        let mut routes = smoltcp::iface::Routes::new(&mut store.routes_cache[..]);
+        routes
+            .add_default_ipv4_route(smoltcp::wire::Ipv4Address::UNSPECIFIED)
+            .ok();
+
+        let neighbor_cache = smoltcp::iface::NeighborCache::new(&mut store.neighbor_cache[..]);
+
+        let interface = smoltcp::iface::InterfaceBuilder::new(eth_dma)
+            .ethernet_addr(mac_addr)
+            .neighbor_cache(neighbor_cache)
+            .ip_addrs(&mut store.ip_addrs[..])
+            .routes(routes)
+            .finalize();
+
+        let sockets = {
+            let mut sockets = smoltcp::socket::SocketSet::new(&mut store.sockets[..]);
+
+            for storage in store.tcp_socket_storage[..].iter_mut() {
+                let tcp_socket = {
+                    let rx_buffer =
+                        smoltcp::socket::TcpSocketBuffer::new(&mut storage.rx_storage[..]);
+                    let tx_buffer =
+                        smoltcp::socket::TcpSocketBuffer::new(&mut storage.tx_storage[..]);
+
+                    smoltcp::socket::TcpSocket::new(rx_buffer, tx_buffer)
+                };
+                sockets.add(tcp_socket);
+            }
+
+            for storage in store.udp_socket_storage[..].iter_mut() {
+                let udp_socket = {
+                    let rx_buffer = smoltcp::socket::UdpSocketBuffer::new(
+                        &mut storage.rx_metadata[..],
+                        &mut storage.rx_storage[..],
+                    );
+                    let tx_buffer = smoltcp::socket::UdpSocketBuffer::new(
+                        &mut storage.tx_metadata[..],
+                        &mut storage.tx_storage[..],
+                    );
+
+                    smoltcp::socket::UdpSocket::new(rx_buffer, tx_buffer)
+                };
+                sockets.add(udp_socket);
+            }
+
+            sockets.add(smoltcp::socket::Dhcpv4Socket::new());
+
+            sockets
+        };
+
+        let random_seed = {
+            let mut rng = device.RNG.constrain(ccdr.peripheral.RNG, &ccdr.clocks);
+            let mut data = [0u8; 8];
+            rng.fill(&mut data).ok();
+            data
+        };
+
+        let mut stack = smoltcp_nal::NetworkStack::new(interface, sockets);
+        stack.seed_random_port(&random_seed);
+
+        NetworkDevices {
+            stack,
+            phy: lan8742a,
+            mac_address: mac_addr,
+        }
+    };
+
+    let mono = Systick::new(core.SYST, ccdr.clocks.hclk().0);
+
+    let link_led = gpiob.pb0.into_push_pull_output();
+    let led = gpioe.pe1.into_push_pull_output();
+
+    core.SCB.invalidate_icache();
+    core.SCB.enable_icache();
+
+    (network_devices, mono, link_led, led)
+}

@@ -6,7 +6,7 @@ use stm32h7xx_hal::{
     self as hal,
     ethernet::{self, PHY},
     gpio::{gpiob::PB0, gpioe::PE1, Output, PushPull, Speed::VeryHigh},
-    hal::digital::v2::OutputPin,
+    // hal::digital::v2::OutputPin,
     prelude::*,
 };
 use systick_monotonic::Systick;
@@ -18,24 +18,22 @@ const NUM_TCP_SOCKETS: usize = 4;
 const NUM_UDP_SOCKETS: usize = 4;
 const NUM_SOCKETS: usize = NUM_UDP_SOCKETS + NUM_TCP_SOCKETS;
 
-pub struct NetStorage {
+pub struct NetworkStorage {
     pub ip_addrs: [smoltcp::wire::IpCidr; 1],
-
-    // Note: There is an additional socket set item required for the DHCP socket.
-    pub sockets: [Option<smoltcp::socket::SocketSetItem<'static>>; NUM_SOCKETS + 1],
+    pub sockets: [Option<smoltcp::socket::SocketSetItem<'static>>; NUM_SOCKETS + 1], // + 1 for DHCP
     pub tcp_socket_storage: [TcpSocketStorage; NUM_TCP_SOCKETS],
     pub udp_socket_storage: [UdpSocketStorage; NUM_UDP_SOCKETS],
     pub neighbor_cache: [Option<(smoltcp::wire::IpAddress, smoltcp::iface::Neighbor)>; 8],
     pub routes_cache: [Option<(smoltcp::wire::IpCidr, smoltcp::iface::Route)>; 8],
 }
 
-impl NetStorage {
+impl NetworkStorage {
     const IP_INIT: smoltcp::wire::IpCidr = smoltcp::wire::IpCidr::Ipv4(
         smoltcp::wire::Ipv4Cidr::new(smoltcp::wire::Ipv4Address::UNSPECIFIED, 0),
     );
 
-    const fn new() -> Self {
-        NetStorage {
+    pub const fn new() -> Self {
+        NetworkStorage {
             // Placeholder for the real IP address, which is initialized at runtime.
             ip_addrs: [Self::IP_INIT],
             neighbor_cache: [None; 8],
@@ -82,13 +80,10 @@ impl TcpSocketStorage {
     }
 }
 
-static mut STORE: NetStorage = NetStorage::new();
-
 /// The available networking devices on Stabilizer.
 pub struct NetworkDevices {
     pub stack: NetworkStack,
     pub phy: EthernetPhy,
-    pub mac_address: smoltcp::wire::EthernetAddress,
 }
 
 pub type NetworkStack =
@@ -105,6 +100,7 @@ static mut DES_RING: ethernet::DesRing = ethernet::DesRing::new();
 pub fn setup(
     mut core: rtic::export::Peripherals,
     device: stm32h7xx_hal::stm32::Peripherals,
+    network_storage: &'static mut NetworkStorage,
 ) -> (NetworkDevices, Systick<1_000>, LinkLed, UserLed) {
     let pwr = device.PWR.constrain();
     let pwrcfg = pwr.ldo().freeze();
@@ -171,7 +167,7 @@ pub fn setup(
 
         unsafe { ethernet::enable_interrupt() };
 
-        let store = unsafe { &mut STORE };
+        let store = network_storage;
 
         store.ip_addrs[0] = smoltcp::wire::IpCidr::new(
             smoltcp::wire::IpAddress::Ipv4(smoltcp::wire::Ipv4Address::UNSPECIFIED),
@@ -241,7 +237,6 @@ pub fn setup(
         NetworkDevices {
             stack,
             phy: lan8742a,
-            mac_address: mac_addr,
         }
     };
 

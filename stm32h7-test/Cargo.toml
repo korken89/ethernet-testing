@@ -34,7 +34,7 @@ default-features = false
 # set logging levels here
 default = [
   "defmt-default",
-  # "dependency-a/defmt-trace",
+  "smoltcp-nal/defmt-default",
 ]
 
 # do NOT modify these features

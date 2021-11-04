@@ -5,7 +5,7 @@ use nanorand::Rng;
 pub use smoltcp;
 
 use embedded_nal::{TcpClientStack, UdpClientStack};
-use smoltcp::socket::{AnySocket, Dhcpv4Event, Dhcpv4Socket, SocketHandle};
+use smoltcp::socket::{AnySocket, Dhcpv4Event, Dhcpv4Socket, DnsQuery, DnsSocket, SocketHandle};
 use smoltcp::wire::{IpAddress, IpCidr, IpEndpoint, Ipv4Address, Ipv4Cidr};
 
 use heapless::Vec;
@@ -54,6 +54,7 @@ where
 {
     network_interface: smoltcp::iface::Interface<'b, DeviceT>,
     dhcp_handle: Option<SocketHandle>,
+    dns_handle: Option<SocketHandle>,
     sockets: smoltcp::socket::SocketSet<'a>,
     unused_tcp_handles: Vec<SocketHandle, 16>,
     unused_udp_handles: Vec<SocketHandle, 16>,
@@ -87,6 +88,9 @@ where
         let mut unused_tcp_handles: Vec<SocketHandle, 16> = Vec::new();
         let mut unused_udp_handles: Vec<SocketHandle, 16> = Vec::new();
         let mut dhcp_handle: Option<SocketHandle> = None;
+        let mut dns_handle: Option<SocketHandle> = None;
+
+        defmt::info!("Hello from NAL!");
 
         for socket in sockets.iter() {
             match socket {
@@ -98,6 +102,9 @@ where
                 }
                 smoltcp::socket::Socket::Dhcpv4(sock) => {
                     dhcp_handle.replace(sock.handle());
+                }
+                smoltcp::socket::Socket::Dns(sock) => {
+                    dns_handle.replace(sock.handle());
                 }
 
                 // This branch may be enabled through cargo feature unification (e.g. if an
@@ -112,6 +119,7 @@ where
             network_interface: stack,
             sockets,
             dhcp_handle,
+            dns_handle,
             unused_tcp_handles,
             unused_udp_handles,
             name_servers: Vec::new(),
@@ -150,6 +158,7 @@ where
                         {
                             close_sockets = true;
                             Self::set_ipv4_addr(&mut self.network_interface, config.address);
+                            defmt::info!("DHCP address: {}", config.address);
                         }
 
                         // Store DNS server addresses for later read-back
@@ -159,6 +168,7 @@ where
                                 // Note(unwrap): The name servers vector is at least as long as the
                                 // number of DNS servers reported via DHCP.
                                 self.name_servers.push(*server).ok();
+                                defmt::info!("DNS server: {}", server);
                             }
                         }
 
@@ -190,6 +200,17 @@ where
                 self.close_sockets();
             }
         }
+
+        // Service the DNS client.
+        // if let Some(handle) = self.dns_handle {
+        //     match self.sockets.get::<DnsSocket>(handle).get_query_result() {
+        //         Ok(addrs) => {
+        //             // ...
+        //         }
+        //         Err(Error::Exhausted) => {} // not done yet
+        //         Err(e) => defmt::info!("query failed: {:?}", e),
+        //     }
+        // }
 
         Ok(updated)
     }

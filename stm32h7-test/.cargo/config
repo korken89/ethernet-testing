@@ -9,7 +9,7 @@
 # runner = "arm-none-eabi-gdb -q -x openocd.gdb"
 # runner = "gdb-multiarch -q -x jlink.gdb"
 # runner = "gdb -q -x openocd.gdb"
-runner = "probe-run --chip STM32H743ZGTx"
+runner = "probe-run --chip STM32H743ZGTx --connect-under-reset"
 
 rustflags = [
   "-C", "link-arg=-Tlink.x",
@@ -21,5 +21,5 @@ rustflags = [
 target = "thumbv7em-none-eabihf" # Cortex-M4F and Cortex-M7F (with FPU)
 
 [alias]
-rb = "run --bin"
 rrb = "run --release --bin"
+brb = "build --release --bin"

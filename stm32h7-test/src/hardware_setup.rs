@@ -87,14 +87,14 @@ pub struct NetworkDevices {
 }
 
 pub type NetworkStack =
-    smoltcp_nal::NetworkStack<'static, 'static, hal::ethernet::EthernetDMA<'static>>;
+    smoltcp_nal::NetworkStack<'static, 'static, hal::ethernet::EthernetDMA<'static, 4, 4>>;
 
 pub type EthernetPhy = hal::ethernet::phy::LAN8742A<hal::ethernet::EthernetMAC>;
 
 // #[link_section = ".sram3.eth"]
 #[link_section = ".axisram.eth"]
 /// Static storage for the ethernet DMA descriptor ring.
-static mut DES_RING: ethernet::DesRing = ethernet::DesRing::new();
+static mut DES_RING: ethernet::DesRing<4, 4> = ethernet::DesRing::new();
 
 #[inline(always)]
 pub fn setup(

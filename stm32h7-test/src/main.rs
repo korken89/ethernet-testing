@@ -3,10 +3,8 @@
 
 mod hardware_setup;
 
-use core::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use defmt_rtt as _;
 use panic_probe as _;
-use stm32h7xx_hal::ethernet;
 
 // same panicking *behavior* as `panic-probe` but doesn't print a panic message
 // this prevents the panic message being printed *twice* when `defmt::panic` is invoked
@@ -15,11 +13,10 @@ fn panic() -> ! {
     cortex_m::asm::udf()
 }
 
-static COUNT: AtomicUsize = AtomicUsize::new(0);
 defmt::timestamp!("{=usize}", {
     // NOTE(no-CAS) `timestamps` runs with interrupts disabled
     // TODO: Change to correct time when RTIC 0.6
-    let n = COUNT.load(AtomicOrdering::Relaxed);
+    let n = app::monotonics::now().duration_since_epoch().ticks() as usize;
     // COUNT.store(n + 1, AtomicOrdering::Relaxed);
     n
 });
@@ -34,11 +31,9 @@ pub fn exit() -> ! {
 #[rtic::app(device = stm32h7xx_hal::pac, dispatchers = [USART1, USART2])]
 mod app {
     use crate::hardware_setup::{self, LinkLed, NetworkStorage, UserLed};
-    use core::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
-    use rtic::rtic_monotonic::{Milliseconds, Seconds};
     use stm32h7xx_hal::ethernet;
-    use stm32h7xx_hal::hal::digital::v2::OutputPin;
-    use systick_monotonic::Systick;
+    use stm32h7xx_hal::hal::digital::v2::{OutputPin, ToggleableOutputPin};
+    use systick_monotonic::*;
 
     #[local]
     struct Local {
@@ -65,7 +60,6 @@ mod app {
 
         foo::spawn().ok();
         ethernet_link::spawn().ok();
-        cnt::spawn().ok();
 
         defmt::info!("init");
 
@@ -86,7 +80,7 @@ mod app {
     #[task(capacity = 8, shared = [network])]
     fn ipstack_handler(cx: ipstack_handler::Context) {
         let mut network = cx.shared.network;
-        let time = monotonics::now().duration_since_epoch().integer();
+        let time = monotonics::now().duration_since_epoch().ticks();
         match network.lock(|l| l.stack.poll(time as i64)) {
             Ok(true) => {
                 // Something happened
@@ -132,28 +126,13 @@ mod app {
 
         *link_was_up = link_is_up;
 
-        ethernet_link::spawn_after(Milliseconds(200u32)).ok();
+        ethernet_link::spawn_after(200.millis()).ok();
     }
 
-    #[task(priority = 8)]
-    fn cnt(_: cnt::Context) {
-        let n = crate::COUNT.load(AtomicOrdering::Relaxed);
-        crate::COUNT.store(n + 1, AtomicOrdering::Relaxed);
-        cnt::spawn_after(Milliseconds(1u32)).ok();
-    }
-
-    #[task(local = [led, state: bool = false])]
+    #[task(local = [led])]
     fn foo(cx: foo::Context) {
-        let led = cx.local.led;
-        let state = cx.local.state;
+        cx.local.led.toggle().ok();
 
-        if *state {
-            led.set_high().ok();
-        } else {
-            led.set_low().ok();
-        }
-
-        *state = !*state;
-        foo::spawn_after(Seconds(1u32)).ok();
+        foo::spawn_after(1.secs()).ok();
     }
 }

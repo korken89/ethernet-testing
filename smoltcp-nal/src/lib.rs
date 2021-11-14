@@ -8,7 +8,8 @@ use embedded_nal::{TcpClientStack, UdpClientStack};
 use smoltcp::iface::Interface;
 use smoltcp::phy::Device;
 use smoltcp::socket::{
-    AnySocket, Dhcpv4Event, Dhcpv4Socket, Socket, SocketHandle, TcpSocket, UdpSocket,
+    AnySocket, Dhcpv4Event, Dhcpv4Socket, DnsQuery, DnsSocket, Socket, SocketHandle, TcpSocket,
+    UdpSocket,
 };
 use smoltcp::wire::{IpAddress, IpCidr, IpEndpoint, Ipv4Address, Ipv4Cidr};
 
@@ -73,7 +74,7 @@ where
 {
     network_interface: Interface<'a, DeviceT>,
     dhcp_handle: Option<SocketHandle>,
-    // dns_handle: Option<SocketHandle>,
+    dns_handle: Option<SocketHandle>,
     unused_tcp_handles: Vec<SocketHandle, 16>,
     unused_udp_handles: Vec<SocketHandle, 16>,
     name_servers: Vec<Ipv4Address, 3>,
@@ -105,7 +106,7 @@ where
         NetworkStack {
             network_interface: interface,
             dhcp_handle: None,
-            // dns_handle: None,
+            dns_handle: None,
             unused_tcp_handles: Vec::new(),
             unused_udp_handles: Vec::new(),
             name_servers: Vec::new(),
@@ -127,10 +128,10 @@ where
                 let handle = self.network_interface.add_socket(dhcp_socket);
                 self.dhcp_handle.replace(handle);
             }
-            // Socket::Dns(dns_socket) => {
-            //     let handle = self.network_interface.add_socket(dns_socket);
-            //     self.dns_handle.replace(handle);
-            // }
+            Socket::Dns(dns_socket) => {
+                let handle = self.network_interface.add_socket(dns_socket);
+                self.dns_handle.replace(handle);
+            }
             #[allow(unreachable_patterns)]
             _ => (),
         }
@@ -228,7 +229,7 @@ where
     /// Force-close all sockets.
     pub fn close_sockets(&mut self) {
         // Close all sockets.
-        for socket in self.network_interface.sockets_mut().iter_mut() {
+        for socket in self.network_interface.sockets_mut() {
             if let Some(ref mut socket) = TcpSocket::downcast(socket) {
                 socket.abort();
             }
@@ -283,7 +284,7 @@ where
     /// # Returns
     /// True if the port is in use. False otherwise.
     fn is_port_in_use(&mut self, port: u16) -> bool {
-        for socket in self.network_interface.sockets_mut().iter_mut() {
+        for socket in self.network_interface.sockets_mut() {
             // We only explicitly can close TCP sockets because we cannot access other socket types.
             if let Some(ref socket) = TcpSocket::downcast(socket) {
                 let endpoint = socket.local_endpoint();

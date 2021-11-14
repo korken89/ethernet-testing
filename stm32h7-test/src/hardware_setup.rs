@@ -20,7 +20,7 @@ const NUM_SOCKETS: usize = NUM_UDP_SOCKETS + NUM_TCP_SOCKETS;
 
 pub struct NetworkStorage {
     pub ip_addrs: [smoltcp::wire::IpCidr; 1],
-    pub sockets: [Option<smoltcp::socket::SocketSetItem<'static>>; NUM_SOCKETS + 1], // + 1 for DHCP
+    pub sockets: [Option<smoltcp::socket::SocketSetItem<'static>>; NUM_SOCKETS + 2], // + 1 for DHCP, + 1 for DNS
     pub tcp_socket_storage: [TcpSocketStorage; NUM_TCP_SOCKETS],
     pub udp_socket_storage: [UdpSocketStorage; NUM_UDP_SOCKETS],
     pub neighbor_cache: [Option<(smoltcp::wire::IpAddress, smoltcp::iface::Neighbor)>; 8],
@@ -38,7 +38,7 @@ impl NetworkStorage {
             ip_addrs: [Self::IP_INIT],
             neighbor_cache: [None; 8],
             routes_cache: [None; 8],
-            sockets: [None, None, None, None, None, None, None, None, None],
+            sockets: [None, None, None, None, None, None, None, None, None, None],
             tcp_socket_storage: [TcpSocketStorage::new(); NUM_TCP_SOCKETS],
             udp_socket_storage: [UdpSocketStorage::INIT; NUM_UDP_SOCKETS],
         }
@@ -87,7 +87,7 @@ pub struct NetworkDevices {
 }
 
 pub type NetworkStack =
-    smoltcp_nal::NetworkStack<'static, 'static, hal::ethernet::EthernetDMA<'static, 4, 4>>;
+    smoltcp_nal::NetworkStack<'static, hal::ethernet::EthernetDMA<'static, 4, 4>>;
 
 pub type EthernetPhy = hal::ethernet::phy::LAN8742A<hal::ethernet::EthernetMAC>;
 
@@ -181,48 +181,41 @@ pub fn setup(
 
         let neighbor_cache = smoltcp::iface::NeighborCache::new(&mut store.neighbor_cache[..]);
 
-        let interface = smoltcp::iface::InterfaceBuilder::new(eth_dma)
-            .ethernet_addr(mac_addr)
+        let interface = smoltcp::iface::InterfaceBuilder::new(eth_dma, &mut store.sockets[..])
+            .hardware_addr(mac_addr.into())
             .neighbor_cache(neighbor_cache)
             .ip_addrs(&mut store.ip_addrs[..])
             .routes(routes)
             .finalize();
 
-        let sockets = {
-            let mut sockets = smoltcp::socket::SocketSet::new(&mut store.sockets[..]);
+        let mut stack = smoltcp_nal::NetworkStack::new(interface);
 
+        {
             for storage in store.tcp_socket_storage[..].iter_mut() {
-                let tcp_socket = {
-                    let rx_buffer =
-                        smoltcp::socket::TcpSocketBuffer::new(&mut storage.rx_storage[..]);
-                    let tx_buffer =
-                        smoltcp::socket::TcpSocketBuffer::new(&mut storage.tx_storage[..]);
+                let rx_buffer = smoltcp::socket::TcpSocketBuffer::new(&mut storage.rx_storage[..]);
+                let tx_buffer = smoltcp::socket::TcpSocketBuffer::new(&mut storage.tx_storage[..]);
 
-                    smoltcp::socket::TcpSocket::new(rx_buffer, tx_buffer)
-                };
-                sockets.add(tcp_socket);
+                stack.add_socket(smoltcp::socket::TcpSocket::new(rx_buffer, tx_buffer).into());
             }
 
             for storage in store.udp_socket_storage[..].iter_mut() {
-                let udp_socket = {
-                    let rx_buffer = smoltcp::socket::UdpSocketBuffer::new(
-                        &mut storage.rx_metadata[..],
-                        &mut storage.rx_storage[..],
-                    );
-                    let tx_buffer = smoltcp::socket::UdpSocketBuffer::new(
-                        &mut storage.tx_metadata[..],
-                        &mut storage.tx_storage[..],
-                    );
+                let rx_buffer = smoltcp::socket::UdpSocketBuffer::new(
+                    &mut storage.rx_metadata[..],
+                    &mut storage.rx_storage[..],
+                );
+                let tx_buffer = smoltcp::socket::UdpSocketBuffer::new(
+                    &mut storage.tx_metadata[..],
+                    &mut storage.tx_storage[..],
+                );
 
-                    smoltcp::socket::UdpSocket::new(rx_buffer, tx_buffer)
-                };
-                sockets.add(udp_socket);
+                stack.add_socket(smoltcp::socket::UdpSocket::new(rx_buffer, tx_buffer).into());
             }
 
-            sockets.add(smoltcp::socket::Dhcpv4Socket::new());
+            stack.add_socket(smoltcp::socket::Dhcpv4Socket::new().into());
 
-            sockets
-        };
+            // TODO: Store handle
+            // interface.add_socket(smoltcp::socket::DnsSocket::new());
+        }
 
         let random_seed = {
             let mut rng = device.RNG.constrain(ccdr.peripheral.RNG, &ccdr.clocks);
@@ -231,7 +224,6 @@ pub fn setup(
             data
         };
 
-        let mut stack = smoltcp_nal::NetworkStack::new(interface, sockets);
         stack.seed_random_port(&random_seed);
 
         NetworkDevices {

@@ -10,10 +10,10 @@ categories = ["network-programming", "no-std"]
 repository = "https://github.com/quartiq/smoltcp-nal.git"
 
 [dependencies]
-heapless = "0.7"
+heapless = "0.7.8"
 embedded-nal = "0.6"
 critical-section = "0.2.4"
-defmt = "0.2.0"
+defmt = ">=0.2.0,<0.4"
 
 [dependencies.nanorand]
 version = "0.6.1"
@@ -21,8 +21,8 @@ default-features = false
 features = ["wyrand"]
 
 [dependencies.smoltcp]
-git = "https://github.com/smoltcp-rs/smoltcp"
-branch = "dns"
+git = "https://github.com/korken89/smoltcp.git"
+branch = "dns-with-expose-sockets"
 features = [
     "medium-ethernet",
     "socket-tcp",

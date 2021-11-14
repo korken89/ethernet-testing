@@ -77,7 +77,7 @@ where
     dns_handle: Option<SocketHandle>,
     unused_tcp_handles: Vec<SocketHandle, 16>,
     unused_udp_handles: Vec<SocketHandle, 16>,
-    name_servers: Vec<Ipv4Address, 3>,
+    name_servers: Vec<IpAddress, 3>,
 }
 
 impl<'a, DeviceT> NetworkStack<'a, DeviceT>
@@ -117,18 +117,22 @@ where
     pub fn add_socket(&mut self, socket: Socket<'a>) {
         match socket {
             Socket::Udp(udp_socket) => {
+                defmt::trace!("Added UDP socket");
                 let handle = self.network_interface.add_socket(udp_socket);
                 self.unused_udp_handles.push(handle).ok();
             }
             Socket::Tcp(tcp_socket) => {
+                defmt::trace!("Added TCP socket");
                 let handle = self.network_interface.add_socket(tcp_socket);
                 self.unused_tcp_handles.push(handle).ok();
             }
             Socket::Dhcpv4(dhcp_socket) => {
+                defmt::trace!("Added DHCPv4 socket");
                 let handle = self.network_interface.add_socket(dhcp_socket);
                 self.dhcp_handle.replace(handle);
             }
             Socket::Dns(dns_socket) => {
+                defmt::trace!("Added DNS socket");
                 let handle = self.network_interface.add_socket(dns_socket);
                 self.dns_handle.replace(handle);
             }
@@ -178,9 +182,21 @@ where
                             if let Some(server) = server {
                                 // Note(unwrap): The name servers vector is at least as long as the
                                 // number of DNS servers reported via DHCP.
-                                self.name_servers.push(*server).ok();
-                                defmt::info!("DNS server: {}", server);
+                                self.name_servers.push(IpAddress::Ipv4(*server)).ok();
+                                defmt::trace!("DNS server received: {}", server);
                             }
+                        }
+
+                        // Update the DNS handle with the
+                        if let Some(handle) = self.dns_handle {
+                            defmt::trace!(
+                                "Updating DNS with servers: {}",
+                                self.name_servers.as_slice()
+                            );
+
+                            self.network_interface
+                                .get_socket::<DnsSocket>(handle)
+                                .update_servers(self.name_servers.as_slice());
                         }
 
                         if let Some(route) = config.router {
@@ -285,7 +301,6 @@ where
     /// True if the port is in use. False otherwise.
     fn is_port_in_use(&mut self, port: u16) -> bool {
         for socket in self.network_interface.sockets_mut() {
-            // We only explicitly can close TCP sockets because we cannot access other socket types.
             if let Some(ref socket) = TcpSocket::downcast(socket) {
                 let endpoint = socket.local_endpoint();
                 if endpoint.is_specified() {

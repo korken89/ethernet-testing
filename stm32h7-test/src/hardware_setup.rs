@@ -1,4 +1,4 @@
-use smoltcp_nal::smoltcp;
+use smoltcp_nal::smoltcp::{self, socket::DnsQuery};
 ///! Stabilizer hardware configuration
 ///!
 ///! This file contains all of the hardware-specific configuration of Stabilizer.
@@ -25,6 +25,8 @@ pub struct NetworkStorage {
     pub udp_socket_storage: [UdpSocketStorage; NUM_UDP_SOCKETS],
     pub neighbor_cache: [Option<(smoltcp::wire::IpAddress, smoltcp::iface::Neighbor)>; 8],
     pub routes_cache: [Option<(smoltcp::wire::IpCidr, smoltcp::iface::Route)>; 8],
+    pub dns_servers: [smoltcp::wire::IpAddress; 3],
+    pub dns_queries: [Option<DnsQuery>; 3],
 }
 
 impl NetworkStorage {
@@ -41,6 +43,8 @@ impl NetworkStorage {
             sockets: [None, None, None, None, None, None, None, None, None, None],
             tcp_socket_storage: [TcpSocketStorage::new(); NUM_TCP_SOCKETS],
             udp_socket_storage: [UdpSocketStorage::INIT; NUM_UDP_SOCKETS],
+            dns_servers: [smoltcp::wire::IpAddress::Unspecified; 3],
+            dns_queries: [None, None, None],
         }
     }
 }
@@ -213,8 +217,13 @@ pub fn setup(
 
             stack.add_socket(smoltcp::socket::Dhcpv4Socket::new().into());
 
-            // TODO: Store handle
-            // interface.add_socket(smoltcp::socket::DnsSocket::new());
+            stack.add_socket(
+                smoltcp::socket::DnsSocket::new(
+                    &mut store.dns_servers[..],
+                    &mut store.dns_queries[..],
+                )
+                .into(),
+            );
         }
 
         let random_seed = {

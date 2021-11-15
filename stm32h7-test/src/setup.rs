@@ -101,7 +101,7 @@ pub type EthernetPhy = hal::ethernet::phy::LAN8742A<hal::ethernet::EthernetMAC>;
 static mut DES_RING: ethernet::DesRing<4, 4> = ethernet::DesRing::new();
 
 #[inline(always)]
-pub fn setup(
+pub fn setup_with_ethernet(
     mut core: rtic::export::Peripherals,
     device: stm32h7xx_hal::stm32::Peripherals,
     network_storage: &'static mut NetworkStorage,
@@ -250,4 +250,45 @@ pub fn setup(
     core.SCB.enable_icache();
 
     (network_devices, mono, link_led, led)
+}
+
+#[inline(always)]
+pub fn setup_leds_only(
+    mut core: rtic::export::Peripherals,
+    device: stm32h7xx_hal::stm32::Peripherals,
+) -> (Systick<1_000>, LinkLed, UserLed) {
+    let pwr = device.PWR.constrain();
+    let pwrcfg = pwr.ldo().freeze();
+
+    // Enable SRAM3 for the ethernet descriptor ring.
+    device.RCC.c1_ahb2enr.modify(|_, w| {
+        w.sram1en()
+            .set_bit()
+            .sram2en()
+            .set_bit()
+            .sram3en()
+            .set_bit()
+    });
+
+    // Clear reset flags.
+    device.RCC.rsr.write(|w| w.rmvf().set_bit());
+
+    let rcc = device.RCC.constrain();
+    let ccdr = rcc
+        .sys_ck(200.mhz())
+        .hclk(200.mhz())
+        .freeze(pwrcfg, &device.SYSCFG);
+
+    let gpiob = device.GPIOB.split(ccdr.peripheral.GPIOB);
+    let gpioe = device.GPIOE.split(ccdr.peripheral.GPIOE);
+
+    let mono = Systick::new(core.SYST, ccdr.clocks.hclk().0);
+
+    let link_led = gpiob.pb0.into_push_pull_output();
+    let led = gpioe.pe1.into_push_pull_output();
+
+    core.SCB.invalidate_icache();
+    core.SCB.enable_icache();
+
+    (mono, link_led, led)
 }

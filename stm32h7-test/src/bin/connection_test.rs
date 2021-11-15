@@ -1,17 +1,7 @@
 #![no_main]
 #![no_std]
 
-mod hardware_setup;
-
-use defmt_rtt as _;
-use panic_probe as _;
-
-// same panicking *behavior* as `panic-probe` but doesn't print a panic message
-// this prevents the panic message being printed *twice* when `defmt::panic` is invoked
-#[defmt::panic_handler]
-fn panic() -> ! {
-    cortex_m::asm::udf()
-}
+use ethernet_test as _;
 
 defmt::timestamp!("{=usize}", {
     // NOTE(no-CAS) `timestamps` runs with interrupts disabled
@@ -21,16 +11,9 @@ defmt::timestamp!("{=usize}", {
     n
 });
 
-/// Terminates the application and makes `probe-run` exit with exit-code = 0
-pub fn exit() -> ! {
-    loop {
-        cortex_m::asm::bkpt();
-    }
-}
-
 #[rtic::app(device = stm32h7xx_hal::pac, dispatchers = [USART1, USART2])]
 mod app {
-    use crate::hardware_setup::{self, LinkLed, NetworkStorage, UserLed};
+    use ethernet_test::setup::{self, LinkLed, NetworkStorage, UserLed};
     use stm32h7xx_hal::ethernet;
     use stm32h7xx_hal::hal::digital::v2::{OutputPin, ToggleableOutputPin};
     use systick_monotonic::*;
@@ -43,7 +26,7 @@ mod app {
 
     #[shared]
     struct Shared {
-        network: hardware_setup::NetworkDevices,
+        network: setup::NetworkDevices,
     }
 
     #[monotonic(binds = SysTick, default = true)]
@@ -56,7 +39,7 @@ mod app {
         let network_storage = cx.local.network_storage;
 
         let (network, mono, link_led, led) =
-            hardware_setup::setup(cx.core, cx.device, network_storage);
+            setup::setup_with_ethernet(cx.core, cx.device, network_storage);
 
         foo::spawn().ok();
         ethernet_link::spawn().ok();

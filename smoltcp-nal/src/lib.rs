@@ -8,8 +8,7 @@ use embedded_nal::{TcpClientStack, UdpClientStack};
 use smoltcp::iface::Interface;
 use smoltcp::phy::Device;
 use smoltcp::socket::{
-    AnySocket, Dhcpv4Event, Dhcpv4Socket, DnsQuery, DnsSocket, Socket, SocketHandle, TcpSocket,
-    UdpSocket,
+    AnySocket, Dhcpv4Event, Dhcpv4Socket, DnsSocket, Socket, SocketHandle, TcpSocket, UdpSocket,
 };
 use smoltcp::wire::{IpAddress, IpCidr, IpEndpoint, Ipv4Address, Ipv4Cidr};
 

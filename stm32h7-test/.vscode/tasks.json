@@ -1,0 +1,53 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"command": "cargo",
+			"args": [
+				"brb",
+				"connection_test"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build",
+			"label": "build binary connection_test"
+		},
+		{
+			"command": "cargo",
+			"args": [
+				"rrb",
+				"connection_test"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build",
+			"label": "run binary connection_test"
+		},
+		{
+			"command": "cargo",
+			"args": [
+				"brb",
+				"blinky"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build",
+			"label": "build binary blinky"
+		},
+		{
+			"command": "cargo",
+			"args": [
+				"rrb",
+				"blinky"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build",
+			"label": "run binary blinky"
+		}
+	]
+}

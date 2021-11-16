@@ -16,11 +16,19 @@ chip = "STM32H743ZGTx"
 # chip_descriptions = ["./STM32L4 Series.yaml"]
 
 [default.rtt]
-enabled = true
+enabled = true 
 show_timestamps = true
 timeout = 3000
+channels = [
+    { up = 0, name = "defmt_rtt", format = "Defmt" },
+]
 
 # Whether to save rtt history buffer on exit.
 log_enabled = true
 # Where to save rtt history buffer relative to manifest path.
 log_path = "./logs"
+
+[default.gdb]
+# Whether or not a GDB server should be opened after flashing.
+enabled = false
+gdb_connection_string = "127.0.0.1:1337"

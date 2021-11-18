@@ -99,10 +99,15 @@ mod app {
                 link_led.set_low().ok();
 
                 if !*link_was_up {
+                    defmt::info!("Link up - resetting stack");
                     c.shared.network.lock(|net| net.stack.handle_link_reset());
+                    start_query::spawn_after(2.secs()).ok();
                 }
             }
             false => {
+                if *link_was_up {
+                    defmt::info!("Link down");
+                }
                 link_led.set_high().ok();
             }
         }
@@ -117,5 +122,17 @@ mod app {
         cx.local.led.toggle().ok();
 
         foo::spawn_after(1.secs()).ok();
+    }
+
+    #[task(shared = [network])]
+    fn start_query(mut cx: start_query::Context) {
+        defmt::info!("Starting DNS query for 'server'...");
+
+        // let name = b"\x09rust-lang\x03org\x00";
+        let name = b"\x06server\x00";
+
+        cx.shared.network.lock(|network| {
+            defmt::unwrap!(network.stack.start_dns_query(name));
+        });
     }
 }

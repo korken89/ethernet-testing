@@ -8,7 +8,8 @@ use embedded_nal::{TcpClientStack, UdpClientStack};
 use smoltcp::iface::Interface;
 use smoltcp::phy::Device;
 use smoltcp::socket::{
-    AnySocket, Dhcpv4Event, Dhcpv4Socket, DnsSocket, Socket, SocketHandle, TcpSocket, UdpSocket,
+    AnySocket, Dhcpv4Event, Dhcpv4Socket, DnsQueryHandle, DnsSocket, Socket, SocketHandle,
+    TcpSocket, UdpSocket,
 };
 use smoltcp::wire::{IpAddress, IpCidr, IpEndpoint, Ipv4Address, Ipv4Cidr};
 
@@ -74,6 +75,7 @@ where
     network_interface: Interface<'a, DeviceT>,
     dhcp_handle: Option<SocketHandle>,
     dns_handle: Option<SocketHandle>,
+    dns_query: Option<DnsQueryHandle>,
     unused_tcp_handles: Vec<SocketHandle, 16>,
     unused_udp_handles: Vec<SocketHandle, 16>,
     name_servers: Vec<IpAddress, 3>,
@@ -106,6 +108,7 @@ where
             network_interface: interface,
             dhcp_handle: None,
             dns_handle: None,
+            dns_query: None,
             unused_tcp_handles: Vec::new(),
             unused_udp_handles: Vec::new(),
             name_servers: Vec::new(),
@@ -228,17 +231,44 @@ where
         }
 
         // Service the DNS client.
-        // if let Some(handle) = self.dns_handle {
-        //     match self.sockets.get::<DnsSocket>(handle).get_query_result() {
-        //         Ok(addrs) => {
-        //             // ...
-        //         }
-        //         Err(Error::Exhausted) => {} // not done yet
-        //         Err(e) => defmt::info!("query failed: {:?}", e),
-        //     }
-        // }
+        if let (Some(query_handle), Some(dns_handle)) = (self.dns_query, self.dns_handle) {
+            match self
+                .network_interface
+                .get_socket::<DnsSocket>(dns_handle)
+                .get_query_result(query_handle)
+            {
+                Ok(addrs) => {
+                    self.dns_query = None;
+                    defmt::info!("DNS query for 'server' success: {}", addrs.as_slice());
+                }
+                Err(smoltcp::Error::Exhausted) => {
+                    // defmt::info!("DNS query not complete...");
+                } // not done yet
+                Err(e) => {
+                    self.dns_query = None;
+                    defmt::info!("query failed: {:?}", e)
+                }
+            }
+        }
 
         Ok(updated)
+    }
+
+    pub fn start_dns_query(&mut self, lookup: &[u8]) -> Result<(), ()> {
+        if self.dns_query.is_some() {
+            return Err(());
+        }
+
+        let dns_handle = self.dns_handle.ok_or(())?;
+        let dns_socket = self.network_interface.get_socket::<DnsSocket>(dns_handle);
+        let query_handle = dns_socket.start_query(lookup).map_err(|e| {
+            defmt::info!("DNS query error: {}", e);
+            ()
+        })?;
+
+        self.dns_query = Some(query_handle);
+
+        Ok(())
     }
 
     /// Force-close all sockets.

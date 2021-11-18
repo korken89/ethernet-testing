@@ -110,14 +110,14 @@ pub fn setup_with_ethernet(
     let pwrcfg = pwr.ldo().freeze();
 
     // Enable SRAM3 for the ethernet descriptor ring.
-    device.RCC.c1_ahb2enr.modify(|_, w| {
-        w.sram1en()
-            .set_bit()
-            .sram2en()
-            .set_bit()
-            .sram3en()
-            .set_bit()
-    });
+    // device.RCC.c1_ahb2enr.modify(|_, w| {
+    //     w.sram1en()
+    //         .set_bit()
+    //         .sram2en()
+    //         .set_bit()
+    //         .sram3en()
+    //         .set_bit()
+    // });
 
     // Clear reset flags.
     device.RCC.rsr.write(|w| w.rmvf().set_bit());

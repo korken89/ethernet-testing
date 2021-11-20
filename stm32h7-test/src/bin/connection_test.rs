@@ -129,7 +129,8 @@ mod app {
         defmt::info!("Starting DNS query for 'server'...");
 
         // let name = b"\x09rust-lang\x03org\x00";
-        let name = b"\x06server\x00";
+        // let name = b"\x06server\x00";
+        let name = b"\x0eemifre-archpad\x00";
 
         cx.shared.network.lock(|network| {
             defmt::unwrap!(network.stack.start_dns_query(name));

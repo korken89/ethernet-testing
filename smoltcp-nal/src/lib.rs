@@ -19,7 +19,7 @@ use nanorand::wyrand::WyRand;
 // The start of TCP port dynamic range allocation.
 const TCP_PORT_DYNAMIC_RANGE_START: u16 = 49152;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, defmt::Format)]
 pub enum NetworkError {
     NoSocket,
     ConnectionFailure,
@@ -27,6 +27,14 @@ pub enum NetworkError {
     WriteFailure,
     Unsupported,
     NoIpAddress,
+    DnsPending,
+}
+
+#[derive(Debug, Clone, defmt::Format)]
+pub enum DnsResult {
+    NoQuery,
+    Pending,
+    Finished(Vec<IpAddress, 4>),
 }
 
 #[derive(Debug)]
@@ -76,6 +84,7 @@ where
     dhcp_handle: Option<SocketHandle>,
     dns_handle: Option<SocketHandle>,
     dns_query: Option<DnsQueryHandle>,
+    dns_result: DnsResult,
     unused_tcp_handles: Vec<SocketHandle, 16>,
     unused_udp_handles: Vec<SocketHandle, 16>,
     name_servers: Vec<IpAddress, 3>,
@@ -109,6 +118,7 @@ where
             dhcp_handle: None,
             dns_handle: None,
             dns_query: None,
+            dns_result: DnsResult::NoQuery,
             unused_tcp_handles: Vec::new(),
             unused_udp_handles: Vec::new(),
             name_servers: Vec::new(),
@@ -239,14 +249,16 @@ where
             {
                 Ok(addrs) => {
                     self.dns_query = None;
-                    defmt::info!("DNS query for 'server' success: {}", addrs.as_slice());
+                    self.dns_result = DnsResult::Finished(addrs);
                 }
                 Err(smoltcp::Error::Exhausted) => {
-                    // defmt::info!("DNS query not complete...");
-                } // not done yet
+                    // not done yet
+                    // defmt::trace!("DNS query not complete...");
+                }
                 Err(e) => {
                     self.dns_query = None;
-                    defmt::info!("query failed: {:?}", e)
+                    self.dns_result = DnsResult::NoQuery;
+                    defmt::info!("DNS query failed: {:?}", e)
                 }
             }
         }
@@ -254,21 +266,40 @@ where
         Ok(updated)
     }
 
-    pub fn start_dns_query(&mut self, lookup: &[u8]) -> Result<(), ()> {
+    pub fn start_dns_query(&mut self, lookup: &[u8]) -> Result<(), NetworkError> {
         if self.dns_query.is_some() {
-            return Err(());
+            return Err(NetworkError::DnsPending);
         }
 
-        let dns_handle = self.dns_handle.ok_or(())?;
+        if self.is_ip_unspecified() {
+            return Err(NetworkError::NoIpAddress);
+        }
+
+        let dns_handle = self.dns_handle.ok_or(NetworkError::NoSocket)?;
         let dns_socket = self.network_interface.get_socket::<DnsSocket>(dns_handle);
         let query_handle = dns_socket.start_query(lookup).map_err(|e| {
             defmt::info!("DNS query error: {}", e);
-            ()
+            NetworkError::ConnectionFailure
         })?;
 
         self.dns_query = Some(query_handle);
+        self.dns_result = DnsResult::Pending;
 
         Ok(())
+    }
+
+    pub fn get_dns_result(&mut self) -> Result<Vec<IpAddress, 4>, NetworkError> {
+        let ret = match &self.dns_result {
+            DnsResult::NoQuery => Err(NetworkError::ConnectionFailure),
+            DnsResult::Pending => Err(NetworkError::DnsPending),
+            DnsResult::Finished(val) => Ok(val.clone()),
+        };
+
+        if ret.is_ok() {
+            self.dns_result = DnsResult::NoQuery;
+        }
+
+        ret
     }
 
     /// Force-close all sockets.
@@ -418,13 +449,11 @@ where
             return Err(embedded_nal::nb::Error::Other(NetworkError::NoIpAddress));
         }
 
-        {
-            let internal_socket = self.network_interface.get_socket::<TcpSocket>(*socket);
+        let internal_socket = self.network_interface.get_socket::<TcpSocket>(*socket);
 
-            // If we're already in the process of connecting, ignore the request silently.
-            if internal_socket.is_open() {
-                return Ok(());
-            }
+        // If we're already in the process of connecting, ignore the request silently.
+        if internal_socket.is_open() {
+            return Ok(());
         }
 
         match remote.ip() {

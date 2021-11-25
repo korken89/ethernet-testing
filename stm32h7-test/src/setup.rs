@@ -1,13 +1,14 @@
-use smoltcp_nal::smoltcp::{self, socket::DnsQuery};
 ///! Stabilizer hardware configuration
 ///!
 ///! This file contains all of the hardware-specific configuration of Stabilizer.
+use smoltcp_nal::smoltcp::{self, socket::DnsQuery};
 use stm32h7xx_hal::{
     self as hal,
     ethernet::{self, PHY},
     gpio::{gpiob::PB0, gpioe::PE1, Output, PushPull, Speed::VeryHigh},
     // hal::digital::v2::OutputPin,
     prelude::*,
+    signature,
 };
 use systick_monotonic::Systick;
 
@@ -147,8 +148,8 @@ pub fn setup_with_ethernet(
         let _rmii_txd1 = gpiob.pb13.into_alternate_af11().set_speed(VeryHigh);
     }
 
-    let mac_addr = smoltcp::wire::EthernetAddress([0x02, 0x00, 0x11, 0x22, 0x33, 0x44]);
-    defmt::info!("EUI48: {}", mac_addr);
+    let mac_addr = smoltcp::wire::EthernetAddress(create_mac());
+    defmt::info!("EUI48: {:x}", mac_addr);
 
     let network_devices = {
         // Configure the ethernet controller
@@ -291,4 +292,21 @@ pub fn setup_leds_only(
     core.SCB.enable_icache();
 
     (mono, link_led, led)
+}
+
+pub fn create_mac() -> [u8; 6] {
+    let data = signature::Uid::read();
+
+    let mut crc = 0xffff_ffff_ffff_ffffu64;
+    for byte in data {
+        crc = crc ^ *byte as u64;
+        for _ in 0..8 {
+            let mask = (-((crc & 1) as i64)) as u64;
+            crc = (crc >> 1) ^ (0xc96c_5795_d787_0f42 & mask);
+        }
+    }
+
+    let crc = (!crc).to_ne_bytes();
+
+    [crc[0], crc[1], crc[2], crc[3], crc[4], crc[5]]
 }

@@ -131,6 +131,10 @@ mod app {
         foo::spawn_after(1.secs()).ok();
     }
 
+    //
+    // TODO: DNS to connection should be a state machine in one task
+    //
+
     #[task(shared = [network])]
     fn start_query(mut cx: start_query::Context) {
         defmt::info!("Starting DNS query for 'server'...");

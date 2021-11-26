@@ -165,7 +165,7 @@ mod app {
                 }
                 Err(_) => {
                     // try again
-                    defmt::info!("No DNS result yet...");
+                    defmt::warn!("No DNS result yet...");
                     get_dns_query::spawn_after(500.millis()).ok();
                 }
             }

@@ -2,7 +2,7 @@ use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
 
 fn handle_client(mut stream: TcpStream) {
-    println!("Stream from: {}", stream.local_addr().unwrap().ip());
+    println!("Stream from: {}", stream.peer_addr().unwrap().ip());
 
     // ...
     //

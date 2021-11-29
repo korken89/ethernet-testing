@@ -21,9 +21,9 @@ default-features = false
 features = ["wyrand"]
 
 [dependencies.smoltcp]
-# git = "https://github.com/korken89/smoltcp.git"
-# branch = "dns-with-expose-sockets"
-path = "../../smoltcp"
+git = "https://github.com/korken89/smoltcp.git"
+branch = "dns-with-expose-sockets"
+# path = "../../smoltcp"
 features = [
     "medium-ethernet",
     "socket-tcp",
